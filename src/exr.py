@@ -9,19 +9,19 @@ from datetime import datetime
 from PIL import Image
 from glob import glob
 
-channel_list = [  
-                'R',          'G',          'B',    'colorVariance.Z', 
-        'specular.R', 'specular.G', 'specular.B', 'specularVariance.Z',
-        'diffuse.R',  'diffuse.G',  'diffuse.B',  'diffuseVariance.Z', 
-          'normal.R',   'normal.G',   'normal.B',   'normalVariance.Z', 
-          'albedo.R',   'albedo.G',   'albedo.B',   'albedoVariance.Z', 
-          'depth.Z',                                'depthVariance.Z',
-    ]
-
-# 실행을 root(projectfoler)에서 해야 src.utils를 불러올 수 있다.
+# 실행을 root(projectfoler)에서 해야 불러올 수 있다.
 sys.path.append('.')
 
 import src.utils as utils
+
+channel_list = [  
+               'R',          'G',          'B',    'colorVariance.Z', 
+      'specular.R', 'specular.G', 'specular.B', 'specularVariance.Z',
+       'diffuse.R',  'diffuse.G',  'diffuse.B',  'diffuseVariance.Z', 
+        'normal.R',   'normal.G',   'normal.B',   'normalVariance.Z', 
+        'albedo.R',   'albedo.G',   'albedo.B',   'albedoVariance.Z', 
+         'depth.Z',                                'depthVariance.Z',
+  ]
 
 # Convert bytes(image) to features (for tfrecord)
 def _bytes_to_feature(value):
@@ -55,19 +55,22 @@ def _write_tfrecord(writer, noisy_img, reference):
   writer.write(example.SerializeToString())
 
 def write(path, data):
-  assert data.ndim == 3, "In write(), data ndim must be 3"
+  assert data.ndim == 3, "In write(), data ndim must be 3, but " + str(data.shape)
 
   utils.make_dir(os.path.dirname(path))
+
+  # 어차피 color외에는 보지도 않으니 color만 저장
+  ch_list = channel_list[:3]
 
   h, w, _ = data.shape
   header = OpenEXR.Header(w, h)
   header['compression'] = Imath.Compression(Imath.Compression.PIZ_COMPRESSION)
-  header['channels'] = {c: Imath.Channel(_ch_precision(c)) for c in channel_list}
+  header['channels'] = {c: Imath.Channel(_ch_precision(c)) for c in ch_list}
   
   out = OpenEXR.OutputFile(path, header)
   ch_data = {ch: data[:, :, index].\
-                 astype(_ch_np_precision(channel_list[index])).tostring()
-                 for index, ch in enumerate(channel_list)}
+                 astype(_ch_np_precision(ch_list[index])).tostring()
+                 for index, ch in enumerate(ch_list)}
 
   out.writePixels(ch_data)
 
@@ -118,7 +121,7 @@ def _crop(image, x, y, patch_size):
   ''' x, y 기준으로 patch_size크기만큼을 잘라낸다.'''
   return image[y:y+patch_size, x:x+patch_size, :]
 
-def _make_patches(noisy_img, reference, patch_size, n_sample):
+def _make_patches(noisy_img, reference, patch_size, n_patch):
   ''' patch를 출력해주는 generator
       random한 수가 들어가기 때문에 image 하나만 넣는게 아니라 
       noisy_img, reference 다 들어가야한다.
@@ -126,7 +129,7 @@ def _make_patches(noisy_img, reference, patch_size, n_sample):
     noisy_img       : 3차원 노이즈 이미지
     reference       : 3차원 ground truth 이미지
     patch_size      : patch 크기
-    n_sample        : patch 출력할 개수(샘플할 개수)
+    n_patch         : patch 출력할 개수(샘플할 개수)
   '''
 
   assert noisy_img.ndim == 3, \
@@ -140,7 +143,7 @@ def _make_patches(noisy_img, reference, patch_size, n_sample):
   max_x = w - (patch_size - 1)
   max_y = h - (patch_size - 1)
 
-  for _ in range(n_sample):
+  for _ in range(n_patch):
     x, y = np.random.randint(max_x), np.random.randint(max_y)
 
     # 임의의 x, y좌표를 가지고 crop
@@ -189,9 +192,9 @@ def read(exr_file):
 
   return exr_data.astype(np.float32)
 
-def to_tfrecord(noisy_dir, refer_dir, tfrecord_path, 
-                n_file=-1, patch_size=0, n_sample=0, is_training=False,
-                save_original_img=False, save_patch_img=False):
+def to_tfrecord(noisy_dir, refer_dir, tfrecord_path,
+                n_file=-1, patch_size=0, n_patch=0, is_training=False,
+                grad_add=False, save_original_img=False, save_patch_img=False):
   ''' exr 데이터를 불러와서 tfrecord 파일 하나에 모두 넣는다.
       train일 경우는 patch로 crop하고 넣고 아닌 경우(valid, test)는 이미지
       그대로 집어 넣는다.
@@ -200,8 +203,8 @@ def to_tfrecord(noisy_dir, refer_dir, tfrecord_path,
     refer_dir         : reference의 폴더 경로
     tfrecord_path     : 저장할 tfrecord 파일 경로    
     patch_size        : 잘라낼 patch 크기 (train만 적용)
-    n_sample          : 잘라낼 patch 개수 (train만 적용)
-    n_file            : 폴더 안에서 읽고싶은 파일 개수(-1이면 마지막거 뺴고 다)
+    n_patch           : 잘라낼 patch 개수 (train만 적용)
+    n_file            : 폴더 안에서 읽고싶은 파일 개수(-1이면 다)
     is_training       : train(true) / valid, test(false)
     save_original_img : 읽은 파일들을 이미지로 저장하는 지 여부
     save_patch_img    : 패치들을 저장하는지 여부
@@ -218,8 +221,12 @@ def to_tfrecord(noisy_dir, refer_dir, tfrecord_path,
   total_patch = 0
 
   with tf.python_io.TFRecordWriter(tfrecord_path) as writer:
+
     # exr input, gt 파일 이름들 모두 모으기
-    exr_files = glob(os.path.join(noisy_dir, "*.exr"))[:n_file]
+    if n_file == -1:
+      exr_files = glob(os.path.join(noisy_dir, "*.exr"))
+    else:
+      exr_files = glob(os.path.join(noisy_dir, "*.exr"))[:n_file]
 
     assert len(exr_files) > 0, "There is no files in {}".format(noisy_dir)
     
@@ -233,8 +240,14 @@ def to_tfrecord(noisy_dir, refer_dir, tfrecord_path,
       exr_gt_file = _find_gt_file(exr_file_name, refer_dir)
 
       # exr 파일의 데이터들 읽기
+      # noisy_img는 모든 auxiliary buffer를 읽고
+      # reference는 color값만 가져오기
       noisy_img      = read(exr_file)
-      reference      = read(exr_gt_file)
+      reference      = read(exr_gt_file)[:, :, :3]
+      
+      if grad_add:
+        noisy_img_grad = _calc_grad(noisy_img)
+        noisy_img      = np.concatenate((noisy_img, noisy_img_grad), axis=-1)
 
       # 읽은 파일들을 저장
       if save_original_img:
@@ -246,7 +259,7 @@ def to_tfrecord(noisy_dir, refer_dir, tfrecord_path,
       # ========================================================================
       if is_training:
         patch_num = 0
-        for p_ni, p_re in _make_patches(noisy_img, reference, patch_size, n_sample):
+        for p_ni, p_re in _make_patches(noisy_img, reference, patch_size, n_patch):
           patch_num += 1
           # if is_appropriate(pr):
           _write_tfrecord(writer, p_ni, p_re)
@@ -254,8 +267,10 @@ def to_tfrecord(noisy_dir, refer_dir, tfrecord_path,
           # 패치들을 저장
           if save_patch_img:
             dir_name = './data/dataset/patch'
-            save_debug_img(dir_name + '/noisy_img/' + exr_file_name + '_' + str(patch_num), p_ni)
-            save_debug_img(dir_name + '/reference/' + exr_file_name + '_' + str(patch_num), p_re)
+            save_debug_img(dir_name + '/noisy_img/' + \
+                           exr_file_name + '_' + str(patch_num), p_ni)
+            save_debug_img(dir_name + '/reference/' + \
+                           exr_file_name + '_' + str(patch_num), p_re)
 
         total_patch += patch_num
         
@@ -281,12 +296,25 @@ def to_tfrecord(noisy_dir, refer_dir, tfrecord_path,
       print(f'elapsed time {end_time:.3f}s({h:02}h {m:02}m {s:02}s)')
 
 def make_dataset(mode, tf_record_name,  
-                n_file=-1, n_sample=0, patch_size=0,
+                n_file=-1, n_patch=0, patch_size=0, grad_add=False,
                 save_img=False, save_patch_img=False):
+  ''' datasets을 tfrecord 형태로 만든다.
+  Args:
+    mode           : 학습 데이터('train', 'valid', 'test')
+    tfrecord_name  : (이 이름).tfrecord 형태로 저장된다.
+    n_file         : 파일 개수. (default : -1)
+                    -1일 경우 모두 다 읽는다.
+    n_patch        : 파일로부터 추출한 patch 개수
+    patch_size     : patch 크기 (patch 크기 x patch 크기)를 가진 patch가 나온다.
+    grad_add       : 각 채널 x, y 축 차이를 구해서 채널에 추가적으로 더할지 결정한다.
+    save_img       : 읽은 exr 파일을 저장해놓을지 결정
+    svae_patch_img : patch로 나눈 것들을 저장할지 결정
+  '''
+  
   print('=====================================================================')
   print('Making {} dataset ({}.tfrecord)'.format(mode, tf_record_name))
   print("The number of file to read : ", n_file, "(-1 is all)")
-  print("The number of sample : ", n_sample)
+  print("The number of patch : ", n_patch)
   print("The size of patch : ", patch_size)
   print('=====================================================================')
   
@@ -311,25 +339,16 @@ def make_dataset(mode, tf_record_name,
               tfrecord_path     = tfrecord, 
               n_file            = n_file,
               patch_size        = patch_size,
-              n_sample          = n_sample,
+              n_patch           = n_patch,
               is_training       = is_training,
+              grad_add          = grad_add,
               save_original_img = save_img,
               save_patch_img    = save_patch_img)
 
 if __name__ == '__main__':
-  print('''
-  =====================================================
-  make_dataset('train', 'train', 
-                n_file=-1, n_sample=400, patch_size=65, 
-                save_img=False, save_patch_img=False)
-  make_dataset('valid', 'valid', n_file=-1)
-  make_dataset('test', 'test', n_file=-1)
-  =====================================================
-  ''')  
-
-  input('지금 이렇게 데이터 셋 만들려고 하는데 확실해요?')
-  make_dataset('train', 'train', 
-                n_file=-1, n_sample=400, patch_size=65, 
-                save_img=False, save_patch_img=False)
-  make_dataset('valid', 'valid', n_file=-1)
-  make_dataset('test', 'test', n_file=-1)
+  input('지금 데이터 셋 만들려고 하는데 확실해요?')
+  # make_dataset('train', 'train_40', 
+  #               n_patch=500, patch_size=40, grad_add=True,
+  #               save_img=False, save_patch_img=False)
+  make_dataset('valid', 'valid', grad_add=True)
+  make_dataset('test', 'test', grad_add=True)

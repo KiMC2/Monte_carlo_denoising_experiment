@@ -1,4 +1,6 @@
+import os
 from argparse import ArgumentParser
+from src.utils import make_dir
 
 def _bool(s):
   # 일정 단어로 True False를 표현
@@ -16,6 +18,9 @@ def build_option():
 
   # Model
   # ============================================================================
+  parser.add_argument('-m', '--model_name', type=str,
+                      default="VGGNet",
+                      help='model 이름(VGGNet, ResNet')
 
   parser.add_argument('-ls', '--loss', type=str,
                       default="L1",
@@ -26,11 +31,11 @@ def build_option():
                       help='model 학습할 때 처음 learning rate 값')
 
   parser.add_argument('-lds', '--lr_decay_step', type=int,
-                      default=10000,
+                      default=4000,
                       help='learning rate decay할 주기(step)')
 
   parser.add_argument('-ldr', '--lr_decay_rate', type=float,
-                      default=0.9,
+                      default=0.8,
                       help='learning rate decay 비율')
 
   # ============================================================================
@@ -46,7 +51,7 @@ def build_option():
                       help='model의 paramter를 저장할 폴더')
 
   parser.add_argument('-t', '--tfrecord_train_path', type=str,
-                      default='./data/tfrecord/train.tfrecord',
+                      default='./data/tfrecord/train_40.tfrecord',
                       help="train set을 읽을 tfrecord 파일 이름과 경로")
 
   parser.add_argument('-e', '--tfrecord_test_path', type=str,
@@ -65,8 +70,12 @@ def build_option():
 
   # Dataset
   # ============================================================================
-  parser.add_argument('-nc', '--n_channel', type=int,
-                      default=22,
+  parser.add_argument('-nic', '--n_input_channel', type=int,
+                      default=66,
+                      help='이미지가 가지고 있는 채널 수')
+
+  parser.add_argument('-noc', '--n_output_channel', type=int,
+                      default=3,
                       help='이미지가 가지고 있는 채널 수')
 
   parser.add_argument('-wi', '--img_width', type=int,
@@ -78,7 +87,7 @@ def build_option():
                       help='이미지 세로 크기')
 
   parser.add_argument('-p', '--patch_size', type=int,
-                      default=65,
+                      default=40,
                       help="학습용 패치 크기")
 
   parser.add_argument('-b', '--batch_size', type=int,
@@ -97,24 +106,36 @@ def build_option():
 
   # Training
   # ============================================================================
-  parser.add_argument('-ep', '--epoch_num', type=int,
+  parser.add_argument('-ep', '--n_epoch', type=int,
                       default=1000000000,
                       help='epoch 수. 보통은 그냥 크게!')
   
   parser.add_argument('-lp', '--log_period', type=int,
-                      default=20,
+                      default=100,
                       help='일정 주기마다 logging(print, log)')
 
   parser.add_argument('-vp', '--valid_period', type=int,
-                      default=1000,
+                      default=3000,
                       help='일정 주기마다 모델 parameter 저장')
 
   parser.add_argument('-sp', '--save_period', type=int,
                       default=5000,
                       help='일정 주기마다 모델 parameter 저장')
   
+  parser.add_argument('-nsp', '--n_save_patch_img', type=int,
+                      default=2,
+                      help='학습 중 저장할 patch 개수')
+
   # ============================================================================
-
+  
   option = parser.parse_args()
+  
+  option.text_dir = os.path.join(option.debug_image_dir, option.experiment_name)
+  make_dir(option.text_dir)
+  f = open(option.text_dir + '/option.txt', 'w')
 
+  for op in vars(option):
+    f.write(op + ': ' + str(getattr(option, op)) + '\n')
+
+  f.close()
   return option

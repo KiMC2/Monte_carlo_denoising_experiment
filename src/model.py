@@ -1,21 +1,35 @@
+import os
 import tensorflow as tf
 
-from src.tf_ops import conv2d, deconv2d, batch_norm, SSIM
+from src.tf_ops import conv2d, deconv2d, batch_norm, max_pool, SSIM
+
+def write(sess, path):
+  ''' 모델 레이어 구성을 text파일로 저장한다. '''
+  with open(path, 'w') as f:
+    op = sess.graph.get_operations()
+
+    for m in op:
+      f.write(str(m.values()) + '\n')
+
 
 class DenoisingModel():
-  def __init__(self, n_channel,
+  def __init__(self, n_input_channel,
+                     n_output_channel,
                      selected_loss,
                      start_lr,
                      lr_decay_step,
                      lr_decay_rate,
                      global_step):
 
-    self.noisy_img      = tf.placeholder(tf.float32, [None, None, None, n_channel], name='noisy_img')
-    self.reference      = tf.placeholder(tf.float32, [None, None, None, n_channel], name='reference')
     
-    self.n_channel           = n_channel
-
-    self.denoised_img   = self.build_model(self.noisy_img, n_channel)
+    self.noisy_img      = tf.placeholder(tf.float32, 
+                                        [None, None, None, n_input_channel], 
+                                        name='noisy_img')
+    self.reference      = tf.placeholder(tf.float32, 
+                                        [None, None, None, n_output_channel], 
+                                        name='reference')
+  
+    self.denoised_img   = self.build_model(self.noisy_img, n_output_channel)
     self.loss           = self.build_loss(selected_loss,
                                           self.denoised_img, self.reference)
 
@@ -23,8 +37,10 @@ class DenoisingModel():
     self.lr             = tf.train.exponential_decay( start_lr, 
                                                       global_step,
                                                       lr_decay_step, 
-                                                      lr_decay_rate)
+                                                      lr_decay_rate,
+                                                      staircase=True)
     self.optim          = self.build_optim()
+
 
   def build_model(self, inputs, n_channel):
     ''' 입력용 tensor inputs과 출력 크기 n_channel을 꼭 사용해야함 '''
@@ -53,6 +69,10 @@ class DenoisingModel():
     elif selected_loss == "L1":
       diff = tf.abs(tf.subtract(denoised_img, reference))
       loss = tf.reduce_mean(diff)
+    
+    elif selected_loss == "L1_SUM":
+      diff = tf.abs(tf.subtract(denoised_img, reference))
+      loss = tf.reduce_sum(diff)
 
     elif selected_loss == 'MAPE':
       diff = tf.abs(tf.subtract(denoised_img, reference))
@@ -66,6 +86,8 @@ class DenoisingModel():
 
   def build_optim(self):
     optim = tf.train.AdamOptimizer(self.lr)
+    #return optim.minimize(self.loss, global_step=self.global_step)
+
     grads = optim.compute_gradients(self.loss)
 
     # Clip gradients to avoid exploding weights
@@ -87,17 +109,40 @@ class DenoisingModel():
 
   def optimize(self, sess, noisy_img, reference):
     sess.run(self.optim, feed_dict={self.noisy_img: noisy_img,
-                                    self.reference: reference})
+                                    self.reference: reference}) 
 
-
-class VGGNet(DenoisingModel):
+class ResNet(DenoisingModel):
   def build_model(self, inputs, n_channel):
-    layer = conv2d(inputs, 64)
+    layer = conv2d(inputs, 64, padding='valid', tf_pad="SYMMETRIC")
+    layer = tf.nn.relu(layer)
 
-    for _ in range(18):
-      layer = conv2d(layer, 64)
+    for _ in range(10):
+      layer = self.module(layer)
     
-    layer = conv2d(layer, n_channel)
+    layer = conv2d(layer, 64, padding='valid', tf_pad="SYMMETRIC")
 
     return layer
 
+  def module(self, inputs):
+    layer = conv2d(layer, 64, padding='valid', tf_pad="SYMMETRIC")
+    layer = batch_norm(layer)
+    layer = tf.nn.relu(layer)
+
+    return inputs + layer
+
+class VGGNet(DenoisingModel):
+  def build_model(self, inputs, n_channel):
+    paddings = tf.constant([[0,0], [1, 1], [1, 1], [0,0]])
+    layer = tf.pad(inputs, paddings, "SYMMETRIC")
+    layer = conv2d(layer, 64, padding='valid') 
+    layer = tf.nn.relu(layer)
+
+    for _ in range(5):
+      layer = tf.pad(layer, paddings, "SYMMETRIC")
+      layer = conv2d(layer, 64, padding='valid')
+      layer = tf.nn.relu(layer)
+    
+    layer = tf.pad(layer, paddings, "SYMMETRIC")
+    output = conv2d(layer, n_channel, padding='valid', activation=None)
+
+    return output

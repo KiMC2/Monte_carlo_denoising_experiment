@@ -3,11 +3,18 @@ import tensorflow as tf
 def batch_norm(inputs, data_format="channels_last"):
   return tf.layers.batch_normalization(inputs, \
     axis = -1 if data_format=='channels_last' else 1)
-  
+
 def conv2d(inputs, filters, kernel_size=3, strides=1, 
-           activation=None, padding='same', data_format='channels_last'):
+           activation=None, padding='same', tf_pad='CONSTANT', 
+           data_format='channels_last'):
+  
+  layer = inputs
+  if tf_pad != 'CONSTANT':
+    paddings = tf.constant([[0,0], [1, 1], [1, 1], [0,0]])
+    layer = tf.pad(layer, paddings, "SYMMETRIC")
+
   return tf.layers.conv2d(
-    inputs             = inputs,
+    inputs             = layer,
     filters            = filters,
     kernel_size        = kernel_size,
     strides            = strides,
@@ -30,6 +37,17 @@ def deconv2d(inputs, filters, kernel_size=3, strides=1,
     padding            = padding,
     kernel_initializer = tf.contrib.layers.xavier_initializer()
     #tf.truncated_normal_initializer(stddev=0.01)
+  )
+
+def max_pool(inputs, pool_size=2, strides=2, 
+             padding='valid', data_format='channels_last', name=None):
+  return tf.layers.max_pooling2d(
+    inputs = inputs,
+    pool_size = pool_size,
+    strides = strides,
+    padding = padding,
+    data_format = data_format,
+    name=name
   )
 
 def SSIM(a, b):
